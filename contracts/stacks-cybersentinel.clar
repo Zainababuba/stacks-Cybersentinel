@@ -140,3 +140,76 @@
     (match (map-get? registered_sites {web_identifier: web_identifier})
         some_entry (ok some_entry)
         (err ENTRY_MISSING_ERROR)))
+
+
+;; Core operations
+(define-public (register_secure_site 
+    (web_identifier (string-ascii 255))
+    (security_endorsement (string-ascii 50)))
+    (let (
+        (current_epoch (unwrap-panic (get-stacks-block-info? time (- stacks-block-height u1))))
+        (collateral_requirement (* BASE_COLLATERAL_REQUIREMENT (var-get protection_intensity))))
+
+        ;; Input validation
+        (asserts! (is-ok (validate-web-identifier web_identifier)) INVALID_WEB_IDENTIFIER)
+        (asserts! (is-ok (validate-security-endorsement security_endorsement)) INVALID_SECURITY_ENDORSEMENT)
+        (asserts! (is-eq tx-sender (var-get system_controller)) ACCESS_FORBIDDEN)
+        (asserts! (>= (stx-get-balance tx-sender) collateral_requirement) COLLATERAL_MISSING_ERROR)
+
+        (match (map-get? registered_sites {web_identifier: web_identifier})
+            some_entry DUPLICATE_ENTRY_ERROR
+            (begin
+                (try! (stx-transfer? collateral_requirement tx-sender (as-contract tx-sender)))
+                (map-set registered_sites
+                    {web_identifier: web_identifier}
+                    {
+                        site_proprietor: tx-sender,
+                        authentication_level: "verified",
+                        registration_epoch: current_epoch,
+                        threat_metric: u0,
+                        incident_tally: u0,
+                        locked_assets: collateral_requirement,
+                        safety_check_epoch: current_epoch,
+                        security_endorsement: security_endorsement
+                    })
+                (ok true)))))
+
+(define-public (submit_threat_alert 
+    (web_identifier (string-ascii 255)) 
+    (proof_documentation (string-ascii 500))
+    (threat_magnitude uint))
+    (let (
+        (current_epoch (unwrap-panic (get-stacks-block-info? time (- stacks-block-height u1))))
+        (sentinel_data (default-to 
+            {submission_count: u0, last_action_epoch: u0, credibility_score: u0, reserved_funds: u0, verified_submissions: u0}
+            (map-get? sentinel_performance_log {sentinel_id: tx-sender, target_site: web_identifier}))))
+
+        ;; Input validation
+        (asserts! (is-ok (validate-web-identifier web_identifier)) INVALID_WEB_IDENTIFIER)
+        (asserts! (is-ok (validate-proof-documentation proof_documentation)) INVALID_PROOF_DOCUMENTATION)
+        (asserts! (is-ok (validate-threat-magnitude threat_magnitude)) INVALID_THREAT_MAGNITUDE)
+        (asserts! (not (var-get system_pause_state)) OPERATION_BLOCKED_ERROR)
+        (asserts! (>= (get credibility_score sentinel_data) TRUSTWORTHINESS_BASELINE) COLLATERAL_MISSING_ERROR)
+        (asserts! (> (- current_epoch (get last_action_epoch sentinel_data)) INACTIVITY_WINDOW) TIME_RESTRICTION_ERROR)
+
+        (map-set malicious_site_registry
+            {web_identifier: web_identifier}
+            {
+                alerting_entity: tx-sender,
+                detection_epoch: current_epoch,
+                proof_documentation: proof_documentation,
+                confirmation_state: "pending",
+                threat_magnitude: threat_magnitude,
+                victim_count: u1
+            })
+
+        (map-set sentinel_performance_log
+            {sentinel_id: tx-sender, target_site: web_identifier}
+            {
+                submission_count: (+ (get submission_count sentinel_data) u1),
+                last_action_epoch: current_epoch,
+                credibility_score: (+ (get credibility_score sentinel_data) u5),
+                reserved_funds: (get reserved_funds sentinel_data),
+                verified_submissions: (get verified_submissions sentinel_data)
+            })
+        (ok true)))
