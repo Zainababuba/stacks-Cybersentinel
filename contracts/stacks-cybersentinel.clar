@@ -82,3 +82,61 @@
         safety_check_epoch: uint,
         security_endorsement: (string-ascii 50)
     })
+
+
+(define-map sentinel_performance_log
+    {sentinel_id: principal, target_site: (string-ascii 255)}
+    {
+        submission_count: uint,
+        last_action_epoch: uint,
+        credibility_score: uint,
+        reserved_funds: uint,
+        verified_submissions: uint
+    })
+
+(define-map site_inspection_records
+    {web_identifier: (string-ascii 255)}
+    {
+        inspection_frequency: uint,
+        recent_check_epoch: uint,
+        inspector_id: principal,
+        safety_rating: uint,
+        compliance_status: (string-ascii 50)
+    })
+
+(define-map malicious_site_registry
+    {web_identifier: (string-ascii 255)}
+    {
+        alerting_entity: principal,
+        detection_epoch: uint,
+        proof_documentation: (string-ascii 500),
+        confirmation_state: (string-ascii 20),
+        threat_magnitude: uint,
+        victim_count: uint
+    })
+
+
+
+(define-map sentinel_registry
+    {sentinel_id: principal}
+    {
+        reserved_amount: uint,
+        assessment_count: uint,
+        precision_metric: uint,
+        recent_activity_epoch: uint,
+        operational_mode: (string-ascii 20)
+    })
+
+
+(define-read-only (check_threat_status (web_identifier (string-ascii 255)))
+    (is-some (map-get? malicious_site_registry {web_identifier: web_identifier})))
+
+(define-read-only (fetch_sentinel_rating (sentinel_id principal))
+    (match (map-get? sentinel_performance_log {sentinel_id: sentinel_id, target_site: ""})
+        some_data (get credibility_score some_data)
+        u0))
+
+(define-read-only (fetch_site_status (web_identifier (string-ascii 255)))
+    (match (map-get? registered_sites {web_identifier: web_identifier})
+        some_entry (ok some_entry)
+        (err ENTRY_MISSING_ERROR)))
