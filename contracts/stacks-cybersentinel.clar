@@ -213,3 +213,91 @@
                 verified_submissions: (get verified_submissions sentinel_data)
             })
         (ok true)))
+
+
+(define-private (modify_site_risk (web_identifier (string-ascii 255)) (adjustment_value int))
+    (begin 
+        (asserts! (is-ok (validate-web-identifier web_identifier)) INVALID_WEB_IDENTIFIER)
+        (match (map-get? registered_sites {web_identifier: web_identifier})
+            some_entry 
+                (begin
+                    (map-set registered_sites
+                        {web_identifier: web_identifier}
+                        (merge some_entry {
+                            threat_metric: (+ (get threat_metric some_entry) 
+                                (if (> adjustment_value 0) 
+                                    (to-uint adjustment_value)
+                                    u0))
+                        }))
+                    (ok true))
+            ENTRY_MISSING_ERROR)))
+
+(define-public (validate_threat_report 
+    (web_identifier (string-ascii 255))
+    (is_valid bool))
+    (let (
+        (current_epoch (unwrap-panic (get-stacks-block-info? time (- stacks-block-height u1))))
+        (sentinel_status (unwrap! (map-get? sentinel_registry {sentinel_id: tx-sender}) ACCESS_FORBIDDEN)))
+
+        (asserts! (is-ok (validate-web-identifier web_identifier)) INVALID_WEB_IDENTIFIER)
+        (asserts! (>= (get reserved_amount sentinel_status) BASE_COLLATERAL_REQUIREMENT) COLLATERAL_MISSING_ERROR)
+
+        (map-set sentinel_registry
+            {sentinel_id: tx-sender}
+            (merge sentinel_status {
+                assessment_count: (+ (get assessment_count sentinel_status) u1),
+                recent_activity_epoch: current_epoch
+            }))
+        (if is_valid
+            (modify_site_risk web_identifier 10)
+            (modify_site_risk web_identifier -5))))
+
+
+(define-public (modify_protection_level (new_level uint))
+    (begin
+        (asserts! (is-ok (validate-protection-level new_level)) INVALID_PROTECTION_LEVEL)
+        (asserts! (is-eq tx-sender (var-get system_controller)) ACCESS_FORBIDDEN)
+        (var-set protection_intensity new_level)
+        (ok true)))
+
+(define-public (toggle_system_state (pause_state bool))
+    (begin
+        (asserts! (is-eq tx-sender (var-get system_controller)) ACCESS_FORBIDDEN)
+        (var-set system_pause_state pause_state)
+        (ok true)))
+
+(define-public (reassign_system_control (new_controller principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get system_controller)) ACCESS_FORBIDDEN)
+        (asserts! (not (is-eq new_controller 'SP000000000000000000002Q6VF78)) INVALID_CONTROLLER_ADDRESS)
+        (var-set system_controller new_controller)
+        (ok true)))
+
+;; System initialization
+(define-public (initialize_system (admin principal))
+    (begin
+        (asserts! (is-eq tx-sender (var-get system_controller)) ACCESS_FORBIDDEN)
+        (asserts! (not (is-eq admin 'SP000000000000000000002Q6VF78)) INVALID_CONTROLLER_ADDRESS)
+        (var-set system_controller admin)
+        (var-set protection_intensity u1)
+        (var-set system_pause_state false)
+        (ok true)))
+
+(define-public (enlist_sentinel (collateral_amount uint))
+    (let (
+        (current_epoch (unwrap-panic (get-stacks-block-info? time (- stacks-block-height u1)))))
+        (asserts! (>= collateral_amount BASE_COLLATERAL_REQUIREMENT) COLLATERAL_MISSING_ERROR)
+        (asserts! (>= (stx-get-balance tx-sender) collateral_amount) COLLATERAL_MISSING_ERROR)
+
+        (map-set sentinel_registry
+            {sentinel_id: tx-sender}
+            {
+                reserved_amount: collateral_amount,
+                assessment_count: u0,
+                precision_metric: u100,
+                recent_activity_epoch: current_epoch,
+                operational_mode: "active"
+            })
+        (unwrap! (stx-transfer? collateral_amount tx-sender (as-contract tx-sender))
+                 COLLATERAL_MISSING_ERROR)
+        (ok true)))
